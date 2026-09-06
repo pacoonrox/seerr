@@ -747,7 +747,7 @@ authRoutes.post('/logout', async (req, res, next) => {
             await axios.delete(`${baseUrl}/Devices`, {
               params: { Id: user.jellyfinDeviceId },
               headers: {
-                'X-Emby-Authorization': `MediaBrowser Client="Jellyseerr", Device="Jellyseerr", DeviceId="jellyseerr", Version="${getAppVersion()}", Token="${
+                Authorization: `MediaBrowser Client="Jellyseerr", Device="Jellyseerr", DeviceId="jellyseerr", Version="${getAppVersion()}", Token="${
                   settings.jellyfin.apiKey
                 }"`,
               },
