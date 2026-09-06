@@ -68,6 +68,21 @@ const authenticateQCMock = mock.method(
   async () => ({ ...defaultAuthenticateResponse })
 );
 
+const getJellyfinUserMock = mock.method(
+  JellyfinAPI.prototype,
+  'getUser',
+  async () => ({
+    Id: 'jf-sso-user-001',
+    Name: 'ssouser',
+    ServerId: 'server-1',
+    ServerName: 'Test Jellyfin',
+    Configuration: {
+      GroupedFolders: [],
+    },
+    Policy: { IsAdministrator: false },
+  })
+);
+
 let app: Express;
 
 function createApp() {
@@ -127,6 +142,14 @@ function configureJellyfin() {
   settings.jellyfin.port = 8096;
   settings.jellyfin.useSsl = false;
   settings.jellyfin.urlBase = '';
+}
+
+/** Configure Jellyfin SSO settings for testing */
+function configureJellyfinSso() {
+  configureJellyfin();
+  const settings = getSettings();
+  settings.main.mediaServerLogin = true;
+  settings.jellyfin.externalHostname = 'https://jellyfin.example.com';
 }
 
 describe('POST /auth/jellyfin/quickconnect/initiate', () => {
@@ -500,6 +523,112 @@ describe('POST /auth/jellyfin/quickconnect/authenticate', () => {
       .send({ secret: 'abc123def456abc123def456' });
 
     assert.strictEqual(res.status, 500);
+  });
+});
+
+describe('Jellyfin SSO', () => {
+  beforeEach(() => {
+    delete process.env.SEERR_JELLYFIN_SSO_ORIGINS;
+    getJellyfinUserMock.mock.resetCalls();
+    getJellyfinUserMock.mock.mockImplementation(async () => ({
+      Id: 'jf-sso-user-001',
+      Name: 'ssouser',
+      ServerId: 'server-1',
+      ServerName: 'Test Jellyfin',
+      Configuration: {
+        GroupedFolders: [],
+      },
+      Policy: { IsAdministrator: false },
+    }));
+    configureJellyfinSso();
+  });
+
+  it('rejects start requests from untrusted origins', async () => {
+    const res = await request(app)
+      .post('/auth/jellyfin-sso/start')
+      .set('Origin', 'https://evil.example.com')
+      .send({ jellyfinToken: 'valid-jellyfin-access-token' });
+
+    assert.strictEqual(res.status, 403);
+    assert.strictEqual(getJellyfinUserMock.mock.callCount(), 0);
+  });
+
+  it('accepts trusted origins from the explicit environment allowlist', async () => {
+    process.env.SEERR_JELLYFIN_SSO_ORIGINS =
+      'https://jellyfin-alt.example.com, https://media.example.net';
+
+    const userRepo = getRepository(User);
+    const existingUser = new User({
+      email: 'env-sso@seerr.dev',
+      jellyfinUsername: 'ssouser',
+      jellyfinUserId: 'jf-sso-user-001',
+      permissions: 0,
+      avatar: '/avatarproxy/jf-sso-user-001?v=0',
+      userType: UserType.JELLYFIN,
+    });
+    await userRepo.save(existingUser);
+
+    const res = await request(app)
+      .post('/auth/jellyfin-sso/start')
+      .set('Origin', 'https://media.example.net')
+      .send({ jellyfinToken: 'valid-jellyfin-access-token' });
+
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(
+      res.headers['access-control-allow-origin'],
+      'https://media.example.net'
+    );
+  });
+
+  it('creates a one-time ticket for an existing Jellyfin user', async () => {
+    const userRepo = getRepository(User);
+    const existingUser = new User({
+      email: 'existing-sso@seerr.dev',
+      jellyfinUsername: 'ssouser',
+      jellyfinUserId: 'jf-sso-user-001',
+      permissions: 0,
+      avatar: '/avatarproxy/jf-sso-user-001?v=0',
+      userType: UserType.JELLYFIN,
+    });
+    await userRepo.save(existingUser);
+
+    const startRes = await request(app)
+      .post('/auth/jellyfin-sso/start')
+      .set('Origin', 'https://jellyfin.example.com')
+      .send({ jellyfinToken: 'valid-jellyfin-access-token' });
+
+    assert.strictEqual(startRes.status, 200);
+    assert.match(startRes.body.redirectUrl, /jellyfin-sso\/consume/);
+    assert.strictEqual(startRes.body.expiresInSeconds, 20);
+    assert.strictEqual(getJellyfinUserMock.mock.callCount(), 1);
+
+    const agent = request.agent(app);
+    const consumePath = startRes.body.redirectUrl.replace('/api/v1', '');
+
+    const consumeRes = await agent.get(consumePath).redirects(0);
+    assert.strictEqual(consumeRes.status, 302);
+    assert.strictEqual(consumeRes.headers.location, '/');
+
+    const meRes = await agent.get('/auth/me');
+    assert.strictEqual(meRes.status, 200);
+    assert.strictEqual(meRes.body.jellyfinUserId, 'jf-sso-user-001');
+
+    const reuseRes = await request(app).get(consumePath);
+    assert.strictEqual(reuseRes.status, 403);
+  });
+
+  it('rejects start requests when the Jellyfin token is invalid', async () => {
+    getJellyfinUserMock.mock.mockImplementation(async () => {
+      throw new ApiError(401, ApiErrorCode.InvalidAuthToken);
+    });
+
+    const res = await request(app)
+      .post('/auth/jellyfin-sso/start')
+      .set('Origin', 'https://jellyfin.example.com')
+      .send({ jellyfinToken: 'invalid-jellyfin-access-token' });
+
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual(res.body.message, ApiErrorCode.InvalidCredentials);
   });
 });
 

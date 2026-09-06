@@ -4164,6 +4164,83 @@ paths:
           description: Quick Connect not authorized or access denied
         '500':
           description: Authentication failed
+  /auth/jellyfin-sso/start:
+    options:
+      summary: Preflight Jellyfin SSO
+      description: Handles CORS preflight for Jellyfin SSO handoff requests.
+      security: []
+      tags:
+        - auth
+      responses:
+        '204':
+          description: Preflight accepted
+        '403':
+          description: Origin denied
+    post:
+      summary: Start Jellyfin SSO
+      description: Validates a Jellyfin access token and creates a short-lived, one-time Seerr login ticket.
+      security: []
+      tags:
+        - auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                jellyfinToken:
+                  type: string
+                  minLength: 16
+                  maxLength: 4096
+                returnTo:
+                  type: string
+                  maxLength: 2048
+              required:
+                - jellyfinToken
+      responses:
+        '200':
+          description: One-time login ticket created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirectUrl:
+                    type: string
+                    example: /api/v1/auth/jellyfin-sso/consume?ticket=abc&returnTo=%2F
+                  expiresInSeconds:
+                    type: number
+                    example: 20
+        '400':
+          description: Invalid request
+        '403':
+          description: Origin denied or SSO unavailable
+  /auth/jellyfin-sso/consume:
+    get:
+      summary: Consume Jellyfin SSO ticket
+      description: Consumes a short-lived Jellyfin SSO ticket exactly once, creates a Seerr session, and redirects.
+      security: []
+      tags:
+        - auth
+      parameters:
+        - in: query
+          name: ticket
+          required: true
+          schema:
+            type: string
+          description: One-time ticket returned by the start endpoint
+        - in: query
+          name: returnTo
+          required: false
+          schema:
+            type: string
+          description: Relative path to redirect to after the session is created
+      responses:
+        '302':
+          description: Session created and redirected
+        '403':
+          description: Ticket invalid, reused, or expired
   /auth/local:
     post:
       summary: Sign in using a local account

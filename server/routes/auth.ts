@@ -15,12 +15,27 @@ import { ApiError } from '@server/types/error';
 import { getAppVersion } from '@server/utils/appVersion';
 import { getHostname } from '@server/utils/getHostname';
 import axios from 'axios';
-import { Router } from 'express';
+import crypto from 'crypto';
+import { Router, type Request, type Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import net from 'net';
 import validator from 'validator';
 import { z } from 'zod';
 
 const authRoutes = Router();
+const JELLYFIN_SSO_TICKET_TTL_MS = 20 * 1000;
+
+interface JellyfinSsoTicket {
+  userId: number;
+  expiresAt: number;
+}
+
+const jellyfinSsoTickets = new Map<string, JellyfinSsoTicket>();
+
+const jellyfinSsoStart = z.object({
+  jellyfinToken: z.string().min(16).max(4096),
+  returnTo: z.string().max(2048).optional(),
+});
 
 export const quickConnectSecret = z.object({
   secret: z
@@ -28,6 +43,231 @@ export const quickConnectSecret = z.object({
     .min(8)
     .max(128)
     .regex(/^[A-Fa-f0-9]+$/),
+});
+
+const jellyfinSsoLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+function getOrigin(value: string): string | undefined {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+function getJellyfinSsoOrigins(): Set<string> {
+  const { externalHostname } = getSettings().jellyfin;
+  const origins = new Set<string>();
+
+  if (externalHostname) {
+    const origin = getOrigin(externalHostname);
+    if (origin) {
+      origins.add(origin);
+    }
+  }
+
+  for (const value of (process.env.SEERR_JELLYFIN_SSO_ORIGINS ?? '').split(',')) {
+    const origin = getOrigin(value.trim());
+    if (origin) {
+      origins.add(origin);
+    }
+  }
+
+  return origins;
+}
+
+function isSafeReturnTo(returnTo?: string): string {
+  if (!returnTo || !returnTo.startsWith('/') || returnTo.startsWith('//')) {
+    return '/';
+  }
+
+  return returnTo;
+}
+
+function pruneExpiredJellyfinSsoTickets() {
+  const now = Date.now();
+
+  for (const [ticket, data] of jellyfinSsoTickets) {
+    if (data.expiresAt <= now) {
+      jellyfinSsoTickets.delete(ticket);
+    }
+  }
+}
+
+function setJellyfinSsoCorsHeaders(req: Request, res: Response) {
+  const allowedOrigins = getJellyfinSsoOrigins();
+  const origin = req.get('origin');
+
+  if (origin && allowedOrigins.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  }
+}
+
+function isJellyfinSsoOriginAllowed(req: Request): boolean {
+  const allowedOrigins = getJellyfinSsoOrigins();
+  const origin = req.get('origin');
+
+  return !!origin && allowedOrigins.has(origin);
+}
+
+authRoutes.options('/jellyfin-sso/start', (req, res) => {
+  setJellyfinSsoCorsHeaders(req, res);
+
+  if (!isJellyfinSsoOriginAllowed(req)) {
+    return res.status(403).end();
+  }
+
+  return res.status(204).end();
+});
+
+authRoutes.post('/jellyfin-sso/start', jellyfinSsoLimiter, async (req, res, next) => {
+  setJellyfinSsoCorsHeaders(req, res);
+
+  if (!isJellyfinSsoOriginAllowed(req)) {
+    return next({
+      status: 403,
+      message: 'Jellyfin SSO origin is not allowed.',
+    });
+  }
+
+  const settings = getSettings();
+  const userRepository = getRepository(User);
+  const result = jellyfinSsoStart.safeParse(req.body);
+
+  if (!result.success) {
+    return next({
+      status: 400,
+      message: 'Invalid Jellyfin SSO request.',
+    });
+  }
+
+  if (
+    settings.main.mediaServerType !== MediaServerType.JELLYFIN ||
+    settings.main.mediaServerLogin === false ||
+    !(await userRepository.count())
+  ) {
+    return next({
+      status: 403,
+      message: 'Jellyfin SSO is not available.',
+    });
+  }
+
+  try {
+    const hostname = getHostname();
+    const jellyfinServer = new JellyfinAPI(hostname ?? '', result.data.jellyfinToken);
+    const account = await jellyfinServer.getUser();
+
+    let user = await userRepository.findOne({
+      where: { jellyfinUserId: account.Id },
+    });
+
+    if (user) {
+      logger.info('Jellyfin SSO sign-in from existing user', {
+        label: 'API',
+        ip: req.ip,
+        jellyfinUsername: account.Name,
+        userId: user.id,
+      });
+
+      user.avatar = getUserAvatarUrl(user);
+      user.jellyfinUsername = account.Name;
+
+      if (user.username === account.Name) {
+        user.username = '';
+      }
+
+      await userRepository.save(user);
+    } else if (!settings.main.newPlexLogin) {
+      logger.warn('Failed Jellyfin SSO sign-in attempt by unimported Jellyfin user', {
+        label: 'API',
+        ip: req.ip,
+        jellyfinUserId: account.Id,
+        jellyfinUsername: account.Name,
+      });
+
+      return next({
+        status: 403,
+        message: 'Access denied.',
+      });
+    } else {
+      logger.info('Jellyfin SSO sign-in from new Jellyfin user; creating new Seerr user', {
+        label: 'API',
+        ip: req.ip,
+        jellyfinUsername: account.Name,
+      });
+
+      user = new User({
+        email: account.Name,
+        jellyfinUsername: account.Name,
+        jellyfinUserId: account.Id,
+        jellyfinDeviceId: Buffer.from(`BOT_seerr_${account.Name ?? ''}`).toString('base64'),
+        permissions: settings.main.defaultPermissions,
+        userType: UserType.JELLYFIN,
+      });
+      user.avatar = getUserAvatarUrl(user);
+
+      await userRepository.save(user);
+    }
+
+    pruneExpiredJellyfinSsoTickets();
+
+    const ticket = crypto.randomBytes(32).toString('base64url');
+    jellyfinSsoTickets.set(ticket, {
+      userId: user.id,
+      expiresAt: Date.now() + JELLYFIN_SSO_TICKET_TTL_MS,
+    });
+
+    return res.status(200).json({
+      redirectUrl: `/api/v1/auth/jellyfin-sso/consume?ticket=${ticket}&returnTo=${encodeURIComponent(
+        isSafeReturnTo(result.data.returnTo)
+      )}`,
+      expiresInSeconds: JELLYFIN_SSO_TICKET_TTL_MS / 1000,
+    });
+  } catch (e) {
+    logger.warn('Jellyfin SSO authentication failed', {
+      label: 'Auth',
+      errorMessage: e.message,
+      ip: req.ip,
+    });
+
+    return next({
+      status: e.statusCode || 403,
+      message: ApiErrorCode.InvalidCredentials,
+    });
+  }
+});
+
+authRoutes.get('/jellyfin-sso/consume', async (req, res, next) => {
+  const ticket = typeof req.query.ticket === 'string' ? req.query.ticket : '';
+  const returnTo = isSafeReturnTo(
+    typeof req.query.returnTo === 'string' ? req.query.returnTo : undefined
+  );
+
+  pruneExpiredJellyfinSsoTickets();
+
+  const ssoTicket = jellyfinSsoTickets.get(ticket);
+  jellyfinSsoTickets.delete(ticket);
+
+  if (!ssoTicket || ssoTicket.expiresAt <= Date.now()) {
+    return next({
+      status: 403,
+      message: 'Jellyfin SSO ticket is invalid or expired.',
+    });
+  }
+
+  if (req.session) {
+    req.session.userId = ssoTicket.userId;
+  }
+
+  return res.redirect(returnTo);
 });
 
 authRoutes.get('/me', isAuthenticated(), async (req, res) => {
