@@ -192,7 +192,12 @@ const Sidebar = ({
                     <div className="flex flex-shrink-0 items-center px-2">
                       <span className="w-full px-4 text-xl text-gray-50">
                         <Link href="/" className="relative block h-24 w-64">
-                          <Image src="/logo_full.svg" alt="Logo" fill />
+                          <Image
+                            src="/pacojones-face.png"
+                            alt="Pacojones"
+                            fill
+                            className="object-contain"
+                          />
                         </Link>
                       </span>
                     </div>
@@ -256,10 +261,11 @@ const Sidebar = ({
                 <span className="w-full px-4 py-2 text-2xl text-gray-50">
                   <Link href="/" className="relative block h-24">
                     <Image
-                      src="/logo_full.svg"
-                      alt="Logo"
+                      src="/pacojones-face.png"
+                      alt="Pacojones"
                       fill
                       loading="eager"
+                      className="object-contain"
                     />
                   </Link>
                 </span>

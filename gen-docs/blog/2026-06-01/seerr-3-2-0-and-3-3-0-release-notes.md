@@ -3,7 +3,7 @@ title: "Seerr v3.2.0 and v3.3.0 Release Notes"
 description: "Seerr v3.2.0 and v3.3.0"
 slug: seerr-3-2-0-and-3-3-0-release-notes
 authors: [gauthier-th]
-image: https://raw.githubusercontent.com/seerr-team/seerr/refs/heads/develop/gen-docs/static/img/logo_full.svg
+image: https://raw.githubusercontent.com/pacoonrox/seerr/refs/heads/develop/public/logo_full.png
 hide_table_of_contents: false
 ---
 

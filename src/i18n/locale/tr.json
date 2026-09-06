@@ -1515,7 +1515,7 @@
   "components.Settings.Notifications.NotificationsWebhook.supportVariablesTip": "Kullanılabilir değişkenler webhook şablon değişkenleri bölümünde belgelenmiştir",
   "components.Settings.Notifications.NotificationsWebhook.webhookUrlTip": "Test Bildirim URL'si gerçek webhook URL'si yerine {testUrl} olarak ayarlanmıştır.",
   "components.Settings.Notifications.embedPoster": "Poster Göm",
-  "components.Settings.Notifications.usePublicLogo": "Örnek logosu yerine genel Seerr logosunu kullan",
+  "components.Settings.Notifications.usePublicLogo": "Örnek logosu yerine genel Pacojones logosunu kullan",
   "components.Settings.Notifications.usePublicLogoTip": "Seerr örneğiniz herkese açık değilse, ağınız dışındaki e-posta istemcilerinin resmi gösterebilmesi için bu seçeneği etkinleştirin. Resim genel GitHub deposundan çekilecektir.",
   "components.Settings.Notifications.useUserLocale": "Bildirim Alıcısının Dilini Kullan",
   "components.Settings.RadarrModal.apiKeyHelp": "Radarr'da bulun: Ayarlar > Genel > Güvenlik > API Anahtarı",

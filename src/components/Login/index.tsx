@@ -164,7 +164,12 @@ const Login = () => {
       </div>
       <div className="relative z-40 mt-10 flex flex-col items-center px-4 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="relative h-48 w-full max-w-full">
-          <Image src="/logo_stacked.svg" alt="Logo" fill />
+          <Image
+            src="/pacojones-face.png"
+            alt="Pacojones"
+            fill
+            className="object-contain"
+          />
         </div>
       </div>
       <div className="relative z-50 mt-8 sm:mx-auto sm:w-full sm:max-w-md">

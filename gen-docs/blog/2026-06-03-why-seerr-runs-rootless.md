@@ -3,7 +3,7 @@ title: "Why Seerr Doesn't Support PUID/PGID"
 description: "Seerr runs rootless by design. Here's why we won't be adding PUID/PGID support, and why chown is the right approach."
 slug: why-seerr-doesnt-support-puid-pgid
 authors: [fallenbagel]
-image: https://raw.githubusercontent.com/seerr-team/seerr/refs/heads/develop/gen-docs/static/img/logo_full.svg
+image: https://raw.githubusercontent.com/pacoonrox/seerr/refs/heads/develop/public/logo_full.png
 hide_table_of_contents: false
 ---
 
