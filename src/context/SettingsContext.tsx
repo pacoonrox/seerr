@@ -10,7 +10,7 @@ export interface SettingsContextProps {
 
 const defaultSettings = {
   initialized: false,
-  applicationTitle: 'Seerr',
+  applicationTitle: 'Paco',
   applicationUrl: '',
   hideAvailable: false,
   hideBlocklisted: false,
