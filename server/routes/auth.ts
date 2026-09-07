@@ -17,7 +17,7 @@ import { getHostname } from '@server/utils/getHostname';
 import axios from 'axios';
 import crypto from 'crypto';
 import { Router, type Request, type Response } from 'express';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import net from 'net';
 import validator from 'validator';
 import { z } from 'zod';
@@ -53,6 +53,15 @@ const jellyfinSsoLimiter = rateLimit({
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => {
+    const cloudflareIp = req.get('cf-connecting-ip');
+
+    if (cloudflareIp && net.isIP(cloudflareIp)) {
+      return ipKeyGenerator(cloudflareIp);
+    }
+
+    return ipKeyGenerator(req.socket.remoteAddress ?? '0.0.0.0');
+  },
 });
 
 function getOrigin(value: string): string | undefined {
