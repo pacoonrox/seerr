@@ -152,14 +152,66 @@ function sendJellyfinSsoHandoff(res: Response, returnTo: string) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="initial-scale=1, viewport-fit=cover, width=device-width">
-  <meta http-equiv="refresh" content="0; url=${safeReturnTo}">
   <title>Signing in</title>
 </head>
 <body>
-  <script>window.location.replace(${JSON.stringify(returnTo)});</script>
+  <script>setTimeout(function(){window.location.replace(${JSON.stringify(returnTo)});},150);</script>
   <a href="${safeReturnTo}">Continue</a>
 </body>
 </html>`);
+}
+
+function completeJellyfinSso(
+  req: Request,
+  res: Response,
+  next: (err?: unknown) => void,
+  ssoTicket: JellyfinSsoTicket,
+  returnTo: string,
+  embedded: boolean
+) {
+  if (!req.session) {
+    const finalReturnTo = getSeerrReturnTo(returnTo, ssoTicket.jellyfinReturnUrl);
+
+    if (ssoTicket.jellyfinReturnUrl) {
+      return sendJellyfinSsoHandoff(res, finalReturnTo);
+    }
+
+    return res.redirect(finalReturnTo);
+  }
+
+  return req.session.regenerate((regenerateErr) => {
+    if (regenerateErr) {
+      return next(regenerateErr);
+    }
+
+    req.session.userId = ssoTicket.userId;
+
+    if (embedded) {
+      req.session.cookie.sameSite = 'none';
+      req.session.cookie.secure = true;
+    }
+
+    return req.session.save((saveErr) => {
+      if (saveErr) {
+        return next(saveErr);
+      }
+
+      const finalReturnTo = getSeerrReturnTo(returnTo, ssoTicket.jellyfinReturnUrl);
+
+      logger.info('Jellyfin SSO ticket consumed', {
+        label: 'API',
+        ip: req.ip,
+        userId: ssoTicket.userId,
+        mobileReturn: !!ssoTicket.jellyfinReturnUrl,
+      });
+
+      if (ssoTicket.jellyfinReturnUrl) {
+        return sendJellyfinSsoHandoff(res, finalReturnTo);
+      }
+
+      return res.redirect(finalReturnTo);
+    });
+  });
 }
 
 function pruneExpiredJellyfinSsoTickets() {
@@ -338,36 +390,7 @@ authRoutes.get('/jellyfin-sso/consume', async (req, res, next) => {
     });
   }
 
-  if (req.session) {
-    req.session.userId = ssoTicket.userId;
-
-    if (embedded) {
-      req.session.cookie.sameSite = 'none';
-      req.session.cookie.secure = true;
-    }
-
-    return req.session.save((err) => {
-      if (err) {
-        return next(err);
-      }
-
-      const finalReturnTo = getSeerrReturnTo(returnTo, ssoTicket.jellyfinReturnUrl);
-
-      if (ssoTicket.jellyfinReturnUrl) {
-        return sendJellyfinSsoHandoff(res, finalReturnTo);
-      }
-
-      return res.redirect(finalReturnTo);
-    });
-  }
-
-  const finalReturnTo = getSeerrReturnTo(returnTo, ssoTicket.jellyfinReturnUrl);
-
-  if (ssoTicket.jellyfinReturnUrl) {
-    return sendJellyfinSsoHandoff(res, finalReturnTo);
-  }
-
-  return res.redirect(finalReturnTo);
+  return completeJellyfinSso(req, res, next, ssoTicket, returnTo, embedded);
 });
 
 authRoutes.get('/me', isAuthenticated(), async (req, res) => {
