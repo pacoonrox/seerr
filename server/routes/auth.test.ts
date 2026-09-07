@@ -680,11 +680,12 @@ describe('Jellyfin SSO', () => {
     const consumePath = startRes.body.redirectUrl.replace('/api/v1', '');
     const consumeRes = await request(app).get(consumePath).redirects(0);
 
-    assert.strictEqual(consumeRes.status, 302);
-    assert.strictEqual(
-      consumeRes.headers.location,
-      '/?jellyfinReturnUrl=https%3A%2F%2Fjellyfin.example.com%2Fweb%2F%23%2Fhome.html'
+    assert.strictEqual(consumeRes.status, 200);
+    assert.match(
+      consumeRes.text,
+      /window\.location\.replace\("\/\?jellyfinReturnUrl=https%3A%2F%2Fjellyfin\.example\.com%2Fweb%2F%23%2Fhome\.html"\)/
     );
+    assert.ok(consumeRes.headers['set-cookie']);
   });
 
   it('rejects start requests when the Jellyfin token is invalid', async () => {

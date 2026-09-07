@@ -132,6 +132,36 @@ function getSeerrReturnTo(returnTo: string, jellyfinReturnUrl?: string): string 
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function sendJellyfinSsoHandoff(res: Response, returnTo: string) {
+  const safeReturnTo = escapeHtml(returnTo);
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+
+  return res.status(200).send(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="initial-scale=1, viewport-fit=cover, width=device-width">
+  <meta http-equiv="refresh" content="0; url=${safeReturnTo}">
+  <title>Signing in</title>
+</head>
+<body>
+  <script>window.location.replace(${JSON.stringify(returnTo)});</script>
+  <a href="${safeReturnTo}">Continue</a>
+</body>
+</html>`);
+}
+
 function pruneExpiredJellyfinSsoTickets() {
   const now = Date.now();
 
@@ -321,11 +351,23 @@ authRoutes.get('/jellyfin-sso/consume', async (req, res, next) => {
         return next(err);
       }
 
-      return res.redirect(getSeerrReturnTo(returnTo, ssoTicket.jellyfinReturnUrl));
+      const finalReturnTo = getSeerrReturnTo(returnTo, ssoTicket.jellyfinReturnUrl);
+
+      if (ssoTicket.jellyfinReturnUrl) {
+        return sendJellyfinSsoHandoff(res, finalReturnTo);
+      }
+
+      return res.redirect(finalReturnTo);
     });
   }
 
-  return res.redirect(getSeerrReturnTo(returnTo, ssoTicket.jellyfinReturnUrl));
+  const finalReturnTo = getSeerrReturnTo(returnTo, ssoTicket.jellyfinReturnUrl);
+
+  if (ssoTicket.jellyfinReturnUrl) {
+    return sendJellyfinSsoHandoff(res, finalReturnTo);
+  }
+
+  return res.redirect(finalReturnTo);
 });
 
 authRoutes.get('/me', isAuthenticated(), async (req, res) => {
