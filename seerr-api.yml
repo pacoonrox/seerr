@@ -4196,6 +4196,13 @@ paths:
                 returnTo:
                   type: string
                   maxLength: 2048
+                embedded:
+                  type: boolean
+                  description: Requests iframe-compatible session cookies for embedded clients.
+                jellyfinReturnUrl:
+                  type: string
+                  maxLength: 2048
+                  description: Absolute Jellyfin URL to expose as a return link after SSO. Must match the trusted request Origin.
               required:
                 - jellyfinToken
       responses:
@@ -4236,6 +4243,12 @@ paths:
           schema:
             type: string
           description: Relative path to redirect to after the session is created
+        - in: query
+          name: embedded
+          required: false
+          schema:
+            type: string
+          description: Enables iframe-compatible session cookies when set to 1
       responses:
         '302':
           description: Session created and redirected

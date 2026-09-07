@@ -28,6 +28,7 @@ const JELLYFIN_SSO_TICKET_TTL_MS = 20 * 1000;
 interface JellyfinSsoTicket {
   userId: number;
   expiresAt: number;
+  jellyfinReturnUrl?: string;
 }
 
 const jellyfinSsoTickets = new Map<string, JellyfinSsoTicket>();
@@ -36,6 +37,7 @@ const jellyfinSsoStart = z.object({
   jellyfinToken: z.string().min(16).max(4096),
   returnTo: z.string().max(2048).optional(),
   embedded: z.boolean().optional(),
+  jellyfinReturnUrl: z.string().max(2048).optional(),
 });
 
 export const quickConnectSecret = z.object({
@@ -88,6 +90,37 @@ function isSafeReturnTo(returnTo?: string): string {
   }
 
   return returnTo;
+}
+
+function getSafeJellyfinReturnUrl(req: Request, returnUrl?: string): string | undefined {
+  const origin = req.get('origin');
+
+  if (!returnUrl || !origin) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(returnUrl);
+
+    if (url.origin === origin && getJellyfinSsoOrigins().has(url.origin)) {
+      return url.href;
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+function getSeerrReturnTo(returnTo: string, jellyfinReturnUrl?: string): string {
+  if (!jellyfinReturnUrl) {
+    return returnTo;
+  }
+
+  const url = new URL(returnTo, 'http://localhost');
+  url.searchParams.set('jellyfinReturnUrl', jellyfinReturnUrl);
+
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
 function pruneExpiredJellyfinSsoTickets() {
@@ -224,6 +257,7 @@ authRoutes.post('/jellyfin-sso/start', jellyfinSsoLimiter, async (req, res, next
     jellyfinSsoTickets.set(ticket, {
       userId: user.id,
       expiresAt: Date.now() + JELLYFIN_SSO_TICKET_TTL_MS,
+      jellyfinReturnUrl: getSafeJellyfinReturnUrl(req, result.data.jellyfinReturnUrl),
     });
 
     return res.status(200).json({
@@ -278,11 +312,11 @@ authRoutes.get('/jellyfin-sso/consume', async (req, res, next) => {
         return next(err);
       }
 
-      return res.redirect(returnTo);
+      return res.redirect(getSeerrReturnTo(returnTo, ssoTicket.jellyfinReturnUrl));
     });
   }
 
-  return res.redirect(returnTo);
+  return res.redirect(getSeerrReturnTo(returnTo, ssoTicket.jellyfinReturnUrl));
 });
 
 authRoutes.get('/me', isAuthenticated(), async (req, res) => {

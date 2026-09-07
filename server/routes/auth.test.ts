@@ -655,6 +655,38 @@ describe('Jellyfin SSO', () => {
     assert.match(cookieHeader, /Secure/);
   });
 
+  it('returns to the launching Jellyfin origin after mobile SSO', async () => {
+    const userRepo = getRepository(User);
+    const existingUser = new User({
+      email: 'mobile-sso@seerr.dev',
+      jellyfinUsername: 'ssouser',
+      jellyfinUserId: 'jf-sso-user-001',
+      permissions: 0,
+      avatar: '/avatarproxy/jf-sso-user-001?v=0',
+      userType: UserType.JELLYFIN,
+    });
+    await userRepo.save(existingUser);
+
+    const startRes = await request(app)
+      .post('/auth/jellyfin-sso/start')
+      .set('Origin', 'https://jellyfin.example.com')
+      .send({
+        jellyfinToken: 'valid-jellyfin-access-token',
+        jellyfinReturnUrl: 'https://jellyfin.example.com/web/#/home.html',
+      });
+
+    assert.strictEqual(startRes.status, 200);
+
+    const consumePath = startRes.body.redirectUrl.replace('/api/v1', '');
+    const consumeRes = await request(app).get(consumePath).redirects(0);
+
+    assert.strictEqual(consumeRes.status, 302);
+    assert.strictEqual(
+      consumeRes.headers.location,
+      '/?jellyfinReturnUrl=https%3A%2F%2Fjellyfin.example.com%2Fweb%2F%23%2Fhome.html'
+    );
+  });
+
   it('rejects start requests when the Jellyfin token is invalid', async () => {
     getJellyfinUserMock.mock.mockImplementation(async () => {
       throw new ApiError(401, ApiErrorCode.InvalidAuthToken);

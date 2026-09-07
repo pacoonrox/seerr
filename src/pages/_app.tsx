@@ -130,6 +130,14 @@ const CoreApp: Omit<NextAppComponentType, 'origGetInitialProps'> = ({
   let component: React.ReactNode;
   const [loadedMessages, setMessages] = useState<MessagesType>(messages);
   const [currentLocale, setLocale] = useState<AvailableLocale>(locale);
+  const jellyfinReturnUrl =
+    typeof router.query.jellyfinReturnUrl === 'string'
+      ? router.query.jellyfinReturnUrl
+      : undefined;
+  const safeJellyfinReturnUrl =
+    jellyfinReturnUrl && /^https:\/\/[^/]+/.test(jellyfinReturnUrl)
+      ? jellyfinReturnUrl
+      : undefined;
 
   useEffect(() => {
     loadLocaleData(currentLocale).then(setMessages);
@@ -219,6 +227,16 @@ const CoreApp: Omit<NextAppComponentType, 'origGetInitialProps'> = ({
               <StatusChecker />
               <ServiceWorkerSetup />
               <UserContext initialUser={user}>{component}</UserContext>
+              {safeJellyfinReturnUrl ? (
+                <a
+                  href={safeJellyfinReturnUrl}
+                  className="fixed right-3 top-3 z-[10001] flex h-11 w-11 items-center justify-center rounded-full bg-gray-900/90 text-2xl leading-none text-white shadow-lg ring-1 ring-white/20 backdrop-blur hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  style={{ top: 'calc(env(safe-area-inset-top) + 0.75rem)' }}
+                  aria-label="Return to Jellyfin"
+                >
+                  &times;
+                </a>
+              ) : null}
               <Toaster
                 position="top-right"
                 toastOptions={{ duration: 4000 }}
