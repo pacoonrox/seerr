@@ -607,8 +607,20 @@ describe('Jellyfin SSO', () => {
     const consumePath = startRes.body.redirectUrl.replace('/api/v1', '');
 
     const consumeRes = await agent.get(consumePath).redirects(0);
-    assert.strictEqual(consumeRes.status, 302);
-    assert.strictEqual(consumeRes.headers.location, '/');
+    assert.strictEqual(consumeRes.status, 200);
+
+    const handoffTicket = consumeRes.text.match(/handoffTicket: "([^"]+)"/)?.[1];
+    assert.ok(handoffTicket);
+
+    const sessionRes = await agent
+      .post('/auth/jellyfin-sso/session')
+      .send({ handoffTicket });
+
+    assert.strictEqual(sessionRes.status, 200);
+    assert.strictEqual(
+      sessionRes.body.returnTo,
+      '/?jellyfinReturnUrl=https%3A%2F%2Fjellyfin.example.com'
+    );
 
     const meRes = await agent.get('/auth/me');
     assert.strictEqual(meRes.status, 200);
@@ -644,12 +656,21 @@ describe('Jellyfin SSO', () => {
     const consumePath = startRes.body.redirectUrl.replace('/api/v1', '');
     const consumeRes = await request(app)
       .get(consumePath)
-      .set('X-Forwarded-Proto', 'https')
       .redirects(0);
 
-    assert.strictEqual(consumeRes.status, 302);
+    assert.strictEqual(consumeRes.status, 200);
 
-    const setCookie = consumeRes.headers['set-cookie'];
+    const handoffTicket = consumeRes.text.match(/handoffTicket: "([^"]+)"/)?.[1];
+    assert.ok(handoffTicket);
+
+    const sessionRes = await request(app)
+      .post('/auth/jellyfin-sso/session')
+      .set('X-Forwarded-Proto', 'https')
+      .send({ handoffTicket });
+
+    assert.strictEqual(sessionRes.status, 200);
+
+    const setCookie = sessionRes.headers['set-cookie'];
     const cookieHeader = Array.isArray(setCookie) ? setCookie.join('; ') : setCookie;
     assert.match(cookieHeader, /SameSite=None/);
     assert.match(cookieHeader, /Secure/);
@@ -677,15 +698,35 @@ describe('Jellyfin SSO', () => {
 
     assert.strictEqual(startRes.status, 200);
 
+    const agent = request.agent(app);
     const consumePath = startRes.body.redirectUrl.replace('/api/v1', '');
-    const consumeRes = await request(app).get(consumePath).redirects(0);
+    const consumeRes = await agent.get(consumePath).redirects(0);
 
     assert.strictEqual(consumeRes.status, 200);
-    assert.match(
-      consumeRes.text,
-      /window\.location\.replace\("\/\?jellyfinReturnUrl=https%3A%2F%2Fjellyfin\.example\.com%2Fweb%2F%23%2Fhome\.html"\)/
+    assert.match(consumeRes.text, /\/api\/v1\/auth\/jellyfin-sso\/session/);
+
+    const handoffTicket = consumeRes.text.match(/handoffTicket: "([^"]+)"/)?.[1];
+    assert.ok(handoffTicket);
+
+    const sessionRes = await agent
+      .post('/auth/jellyfin-sso/session')
+      .send({ handoffTicket });
+
+    assert.strictEqual(sessionRes.status, 200);
+    assert.strictEqual(
+      sessionRes.body.returnTo,
+      '/?jellyfinReturnUrl=https%3A%2F%2Fjellyfin.example.com%2Fweb%2F%23%2Fhome.html'
     );
-    assert.ok(consumeRes.headers['set-cookie']);
+    assert.ok(sessionRes.headers['set-cookie']);
+
+    const meRes = await agent.get('/auth/me');
+    assert.strictEqual(meRes.status, 200);
+    assert.strictEqual(meRes.body.jellyfinUserId, 'jf-sso-user-001');
+
+    const reuseRes = await request(app)
+      .post('/auth/jellyfin-sso/session')
+      .send({ handoffTicket });
+    assert.strictEqual(reuseRes.status, 403);
   });
 
   it('rejects start requests when the Jellyfin token is invalid', async () => {

@@ -4254,6 +4254,36 @@ paths:
           description: Session created and redirected
         '403':
           description: Ticket invalid, reused, or expired
+  /auth/jellyfin-sso/session:
+    post:
+      summary: Complete Jellyfin SSO browser handoff
+      description: Exchanges a short-lived, one-time browser handoff ticket for a Seerr session.
+      security: []
+      tags:
+        - auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                handoffTicket:
+                  type: string
+              required:
+                - handoffTicket
+      responses:
+        '200':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  returnTo:
+                    type: string
+        '403':
+          description: Handoff ticket invalid, reused, or expired
   /auth/local:
     post:
       summary: Sign in using a local account

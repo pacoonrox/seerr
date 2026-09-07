@@ -29,9 +29,11 @@ interface JellyfinSsoTicket {
   userId: number;
   expiresAt: number;
   jellyfinReturnUrl?: string;
+  embedded?: boolean;
 }
 
 const jellyfinSsoTickets = new Map<string, JellyfinSsoTicket>();
+const jellyfinSsoHandoffTickets = new Map<string, JellyfinSsoTicket>();
 
 const jellyfinSsoStart = z.object({
   jellyfinToken: z.string().min(16).max(4096),
@@ -104,14 +106,18 @@ function isSafeReturnTo(returnTo?: string): string {
 function getSafeJellyfinReturnUrl(req: Request, returnUrl?: string): string | undefined {
   const origin = req.get('origin');
 
-  if (!returnUrl || !origin) {
+  if (!origin || !getJellyfinSsoOrigins().has(origin)) {
     return undefined;
+  }
+
+  if (!returnUrl) {
+    return origin;
   }
 
   try {
     const url = new URL(returnUrl);
 
-    if (url.origin === origin && getJellyfinSsoOrigins().has(url.origin)) {
+    if (url.origin === origin) {
       return url.href;
     }
   } catch {
@@ -132,17 +138,8 @@ function getSeerrReturnTo(returnTo: string, jellyfinReturnUrl?: string): string 
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function sendJellyfinSsoHandoff(res: Response, returnTo: string) {
-  const safeReturnTo = escapeHtml(returnTo);
+function sendJellyfinSsoHandoff(res: Response, handoffTicket: string) {
+  const apiUrl = '/api/v1/auth/jellyfin-sso/session';
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
@@ -155,25 +152,57 @@ function sendJellyfinSsoHandoff(res: Response, returnTo: string) {
   <title>Signing in</title>
 </head>
 <body>
-  <script>setTimeout(function(){window.location.replace(${JSON.stringify(returnTo)});},150);</script>
-  <a href="${safeReturnTo}">Continue</a>
+  <script>
+    (async function() {
+      const response = await fetch(${JSON.stringify(apiUrl)}, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ handoffTicket: ${JSON.stringify(handoffTicket)} })
+      });
+
+      if (!response.ok) {
+        window.location.replace('/login');
+        return;
+      }
+
+      const result = await response.json();
+      window.location.replace(result.returnTo || '/');
+    }());
+  </script>
+  <noscript><a href="/login">Continue</a></noscript>
 </body>
 </html>`);
 }
 
-function completeJellyfinSso(
+function createJellyfinSsoHandoffTicket(ssoTicket: JellyfinSsoTicket): string {
+  pruneExpiredJellyfinSsoTickets();
+
+  const handoffTicket = crypto.randomBytes(32).toString('base64url');
+  jellyfinSsoHandoffTickets.set(handoffTicket, {
+    ...ssoTicket,
+    expiresAt: Date.now() + JELLYFIN_SSO_TICKET_TTL_MS,
+  });
+
+  return handoffTicket;
+}
+
+function saveJellyfinSsoSession(
   req: Request,
   res: Response,
   next: (err?: unknown) => void,
   ssoTicket: JellyfinSsoTicket,
   returnTo: string,
-  embedded: boolean
+  options: {
+    embedded: boolean;
+    json: boolean;
+  }
 ) {
   if (!req.session) {
     const finalReturnTo = getSeerrReturnTo(returnTo, ssoTicket.jellyfinReturnUrl);
 
-    if (ssoTicket.jellyfinReturnUrl) {
-      return sendJellyfinSsoHandoff(res, finalReturnTo);
+    if (options.json) {
+      return res.status(200).json({ returnTo: finalReturnTo });
     }
 
     return res.redirect(finalReturnTo);
@@ -186,7 +215,7 @@ function completeJellyfinSso(
 
     req.session.userId = ssoTicket.userId;
 
-    if (embedded) {
+    if (options.embedded) {
       req.session.cookie.sameSite = 'none';
       req.session.cookie.secure = true;
     }
@@ -206,7 +235,11 @@ function completeJellyfinSso(
       });
 
       if (ssoTicket.jellyfinReturnUrl) {
-        return sendJellyfinSsoHandoff(res, finalReturnTo);
+        return res.status(200).json({ returnTo: finalReturnTo });
+      }
+
+      if (options.json) {
+        return res.status(200).json({ returnTo: finalReturnTo });
       }
 
       return res.redirect(finalReturnTo);
@@ -217,9 +250,11 @@ function completeJellyfinSso(
 function pruneExpiredJellyfinSsoTickets() {
   const now = Date.now();
 
-  for (const [ticket, data] of jellyfinSsoTickets) {
-    if (data.expiresAt <= now) {
-      jellyfinSsoTickets.delete(ticket);
+  for (const ticketMap of [jellyfinSsoTickets, jellyfinSsoHandoffTickets]) {
+    for (const [ticket, data] of ticketMap) {
+      if (data.expiresAt <= now) {
+        ticketMap.delete(ticket);
+      }
     }
   }
 }
@@ -349,6 +384,7 @@ authRoutes.post('/jellyfin-sso/start', jellyfinSsoLimiter, async (req, res, next
       userId: user.id,
       expiresAt: Date.now() + JELLYFIN_SSO_TICKET_TTL_MS,
       jellyfinReturnUrl: getSafeJellyfinReturnUrl(req, result.data.jellyfinReturnUrl),
+      embedded: result.data.embedded,
     });
 
     return res.status(200).json({
@@ -390,7 +426,36 @@ authRoutes.get('/jellyfin-sso/consume', async (req, res, next) => {
     });
   }
 
-  return completeJellyfinSso(req, res, next, ssoTicket, returnTo, embedded);
+  if (ssoTicket.jellyfinReturnUrl) {
+    return sendJellyfinSsoHandoff(res, createJellyfinSsoHandoffTicket(ssoTicket));
+  }
+
+  return saveJellyfinSsoSession(req, res, next, ssoTicket, returnTo, {
+    embedded,
+    json: false,
+  });
+});
+
+authRoutes.post('/jellyfin-sso/session', (req, res, next) => {
+  const handoffTicket =
+    typeof req.body?.handoffTicket === 'string' ? req.body.handoffTicket : '';
+
+  pruneExpiredJellyfinSsoTickets();
+
+  const ssoTicket = jellyfinSsoHandoffTickets.get(handoffTicket);
+  jellyfinSsoHandoffTickets.delete(handoffTicket);
+
+  if (!ssoTicket || ssoTicket.expiresAt <= Date.now()) {
+    return next({
+      status: 403,
+      message: 'Jellyfin SSO handoff ticket is invalid or expired.',
+    });
+  }
+
+  return saveJellyfinSsoSession(req, res, next, ssoTicket, '/', {
+    embedded: !!ssoTicket.embedded,
+    json: true,
+  });
 });
 
 authRoutes.get('/me', isAuthenticated(), async (req, res) => {
