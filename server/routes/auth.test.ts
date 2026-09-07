@@ -93,6 +93,7 @@ function createApp() {
       secret: 'test-secret',
       resave: false,
       saveUninitialized: false,
+      proxy: true,
     })
   );
   app.use(checkUser);
@@ -615,6 +616,43 @@ describe('Jellyfin SSO', () => {
 
     const reuseRes = await request(app).get(consumePath);
     assert.strictEqual(reuseRes.status, 403);
+  });
+
+  it('uses iframe-compatible cookies for embedded tickets', async () => {
+    const userRepo = getRepository(User);
+    const existingUser = new User({
+      email: 'embedded-sso@seerr.dev',
+      jellyfinUsername: 'ssouser',
+      jellyfinUserId: 'jf-sso-user-001',
+      permissions: 0,
+      avatar: '/avatarproxy/jf-sso-user-001?v=0',
+      userType: UserType.JELLYFIN,
+    });
+    await userRepo.save(existingUser);
+
+    const startRes = await request(app)
+      .post('/auth/jellyfin-sso/start')
+      .set('Origin', 'https://jellyfin.example.com')
+      .send({
+        jellyfinToken: 'valid-jellyfin-access-token',
+        embedded: true,
+      });
+
+    assert.strictEqual(startRes.status, 200);
+    assert.match(startRes.body.redirectUrl, /embedded=1/);
+
+    const consumePath = startRes.body.redirectUrl.replace('/api/v1', '');
+    const consumeRes = await request(app)
+      .get(consumePath)
+      .set('X-Forwarded-Proto', 'https')
+      .redirects(0);
+
+    assert.strictEqual(consumeRes.status, 302);
+
+    const setCookie = consumeRes.headers['set-cookie'];
+    const cookieHeader = Array.isArray(setCookie) ? setCookie.join('; ') : setCookie;
+    assert.match(cookieHeader, /SameSite=None/);
+    assert.match(cookieHeader, /Secure/);
   });
 
   it('rejects start requests when the Jellyfin token is invalid', async () => {

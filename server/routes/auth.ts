@@ -35,6 +35,7 @@ const jellyfinSsoTickets = new Map<string, JellyfinSsoTicket>();
 const jellyfinSsoStart = z.object({
   jellyfinToken: z.string().min(16).max(4096),
   returnTo: z.string().max(2048).optional(),
+  embedded: z.boolean().optional(),
 });
 
 export const quickConnectSecret = z.object({
@@ -228,7 +229,7 @@ authRoutes.post('/jellyfin-sso/start', jellyfinSsoLimiter, async (req, res, next
     return res.status(200).json({
       redirectUrl: `/api/v1/auth/jellyfin-sso/consume?ticket=${ticket}&returnTo=${encodeURIComponent(
         isSafeReturnTo(result.data.returnTo)
-      )}`,
+      )}${result.data.embedded ? '&embedded=1' : ''}`,
       expiresInSeconds: JELLYFIN_SSO_TICKET_TTL_MS / 1000,
     });
   } catch (e) {
@@ -250,6 +251,7 @@ authRoutes.get('/jellyfin-sso/consume', async (req, res, next) => {
   const returnTo = isSafeReturnTo(
     typeof req.query.returnTo === 'string' ? req.query.returnTo : undefined
   );
+  const embedded = req.query.embedded === '1';
 
   pruneExpiredJellyfinSsoTickets();
 
@@ -265,6 +267,19 @@ authRoutes.get('/jellyfin-sso/consume', async (req, res, next) => {
 
   if (req.session) {
     req.session.userId = ssoTicket.userId;
+
+    if (embedded) {
+      req.session.cookie.sameSite = 'none';
+      req.session.cookie.secure = true;
+    }
+
+    return req.session.save((err) => {
+      if (err) {
+        return next(err);
+      }
+
+      return res.redirect(returnTo);
+    });
   }
 
   return res.redirect(returnTo);
