@@ -374,7 +374,7 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           year: Number(movie.release_date.slice(0, 4)),
           monitored: true,
           tags,
-          searchNow: !radarrSettings.preventSearch,
+          searchNow: !entity.skipSearch && !radarrSettings.preventSearch,
         };
 
         // Run entity asynchronously so we don't wait for it on the UI side
@@ -722,7 +722,7 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           tags,
           monitored: true,
           monitorNewItems: sonarrSettings.monitorNewItems,
-          searchNow: !sonarrSettings.preventSearch,
+          searchNow: !entity.skipSearch && !sonarrSettings.preventSearch,
         };
 
         // Run entity asynchronously so we don't wait for it on the UI side

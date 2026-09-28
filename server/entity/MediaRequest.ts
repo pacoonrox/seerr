@@ -422,6 +422,7 @@ export class MediaRequest {
         tags: tags,
         isAutoRequest: options.isAutoRequest ?? false,
         ignoreQuota,
+        skipSearch: requestBody.skipSearch ?? false,
       });
 
       await requestRepository.save(request);
@@ -555,6 +556,7 @@ export class MediaRequest {
         ),
         isAutoRequest: options.isAutoRequest ?? false,
         ignoreQuota,
+        skipSearch: requestBody.skipSearch ?? false,
       });
 
       await requestRepository.save(request);
@@ -663,6 +665,11 @@ export class MediaRequest {
 
   @Column({ default: false })
   public ignoreQuota: boolean;
+
+  // See MediaRequestBody.skipSearch - forces searchNow off in MediaRequestSubscriber
+  // regardless of the arr server's preventSearch setting.
+  @Column({ default: false })
+  public skipSearch: boolean;
 
   constructor(init?: Partial<MediaRequest>) {
     Object.assign(this, init);
